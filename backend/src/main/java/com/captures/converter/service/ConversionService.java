@@ -13,8 +13,11 @@ import javax.imageio.stream.*;
 import java.awt.*;
 import java.awt.image.BufferedImage;
 import java.io.*;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.*;
 import java.time.*;
 import java.util.*;
+import java.util.concurrent.TimeUnit;
 
 @Service
 public class ConversionService {
@@ -36,9 +39,12 @@ public class ConversionService {
    GuestUsage u=guestUsage.findByGuestKeyAndUsageDate(guestKey,LocalDate.now()).orElse(new GuestUsage(guestKey,LocalDate.now()));
    if(u.getCount()>=10)throw new ApiException(HttpStatus.TOO_MANY_REQUESTS,"Гостевой лимит: 10 обработок");
   }else if(owner.getRole()!=Role.ADMIN){
-   Instant from=Instant.now().atZone(ZoneOffset.UTC).toLocalDate().atStartOfDay(ZoneOffset.UTC).toInstant();
-   if(conversions.countByOwnerAfter(owner,from)>=150)throw new ApiException(HttpStatus.TOO_MANY_REQUESTS,"Дневной лимит: 150 изображений");
-   if(conversions.sumSourceByOwnerAfter(owner,from)+file.getSize()>500L*1024*1024)throw new ApiException(HttpStatus.TOO_MANY_REQUESTS,"Дневной лимит размера: 500 MB");
+   Instant now=Instant.now();
+   Instant from=now.atZone(ZoneOffset.UTC).toLocalDate().atStartOfDay(ZoneOffset.UTC).toInstant();
+   long conversionLimit=addLimit(150,owner.getActiveBonusDailyConversions(now));
+   long byteLimit=addLimit(500L*1024*1024,owner.getActiveBonusDailyBytes(now));
+   if(conversions.countByOwnerAfter(owner,from)>=conversionLimit)throw new ApiException(HttpStatus.TOO_MANY_REQUESTS,"Дневной лимит: "+conversionLimit+" изображений");
+   if(addLimit(conversions.sumSourceByOwnerAfter(owner,from),file.getSize())>byteLimit)throw new ApiException(HttpStatus.TOO_MANY_REQUESTS,"Дневной лимит размера превышен");
   }
   String target=(format==null?"PNG":format).toUpperCase(Locale.ROOT).replace("JPEG","JPG");
   if(!Set.of("PNG","JPG","WEBP","GIF","TIFF","HEIC","AVIF").contains(target))throw new ApiException(HttpStatus.BAD_REQUEST,"Неподдерживаемый формат");
@@ -69,9 +75,8 @@ public class ConversionService {
   BufferedImage out=new BufferedImage(w,h,BufferedImage.TYPE_INT_ARGB);Graphics2D g=out.createGraphics();g.setRenderingHint(RenderingHints.KEY_INTERPOLATION,RenderingHints.VALUE_INTERPOLATION_BICUBIC);g.drawImage(source,0,0,w,h,null);g.dispose();return out;
  }
  private byte[] encode(BufferedImage image,String target,int quality) throws Exception{
-  if(Set.of("HEIC","AVIF").contains(target)){
-   throw new ApiException(HttpStatus.UNSUPPORTED_MEDIA_TYPE,target+" декодирование/кодирование недоступно: на сервере нет совместимого нативного плагина");
-  }
+  if(Set.of("WEBP","GIF","TIFF","HEIC","AVIF").contains(target))
+   return encodeWithVips(image,target,quality);
   String writerFormat=target.equals("JPG")?"jpeg":target.toLowerCase();
   Iterator<ImageWriter> writers=ImageIO.getImageWritersByFormatName(writerFormat);
   if(!writers.hasNext())throw new ApiException(HttpStatus.UNSUPPORTED_MEDIA_TYPE,"Выходной формат "+target+" не поддерживается установленными ImageIO-плагинами");
@@ -84,11 +89,51 @@ public class ConversionService {
    writer.write(null,new IIOImage(output,null,null),p);
   }finally{writer.dispose();}return out.toByteArray();
  }
+ private byte[] encodeWithVips(BufferedImage image,String target,int quality) throws Exception{
+  Path directory=Files.createTempDirectory("captures-convert-");
+  Path source=directory.resolve("source.png");
+  Path output=directory.resolve("result."+target.toLowerCase(Locale.ROOT));
+  Path log=directory.resolve("vips.log");
+  try{
+   if(!ImageIO.write(image,"png",source.toFile()))
+    throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY,"Не удалось подготовить изображение для конвертации");
+   String outputArgument=output.toString();
+   if(Set.of("WEBP","HEIC","AVIF").contains(target))
+    outputArgument+="[Q="+quality+"]";
+   Process process;
+   try{
+    process=new ProcessBuilder("vips","copy",source.toString(),outputArgument)
+      .redirectErrorStream(true)
+      .redirectOutput(log.toFile())
+      .start();
+   }catch(IOException e){
+    throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE,"На сервере не установлен кодировщик libvips");
+   }
+   if(!process.waitFor(60,TimeUnit.SECONDS)){
+    process.destroyForcibly();
+    process.waitFor();
+    throw new ApiException(HttpStatus.GATEWAY_TIMEOUT,"Истекло время конвертации изображения");
+   }
+   String outputLog=Files.readString(log,StandardCharsets.UTF_8).trim();
+   if(process.exitValue()!=0)
+    throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY,"Не удалось создать формат "+target+": "+outputLog);
+   return Files.readAllBytes(output);
+  }catch(InterruptedException e){
+   Thread.currentThread().interrupt();
+   throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE,"Конвертация изображения была прервана");
+  }finally{
+   Files.deleteIfExists(source);
+   Files.deleteIfExists(output);
+   Files.deleteIfExists(log);
+   Files.deleteIfExists(directory);
+  }
+ }
  private BufferedImage flatten(BufferedImage source){BufferedImage out=new BufferedImage(source.getWidth(),source.getHeight(),BufferedImage.TYPE_INT_RGB);Graphics2D g=out.createGraphics();g.setColor(Color.WHITE);g.fillRect(0,0,out.getWidth(),out.getHeight());g.drawImage(source,0,0,null);g.dispose();return out;}
  private String guessFormat(String name,String type){String n=name==null?"":name.toLowerCase(Locale.ROOT);String ext=n.contains(".")?n.substring(n.lastIndexOf('.')+1).toUpperCase(Locale.ROOT):"";if(!ext.isEmpty())return ext;return type==null?"UNKNOWN":type.replace("image/","").replace("jpeg","jpg").toUpperCase(Locale.ROOT);}
  public Conversion getConversion(Long id){return conversions.findById(id).orElseThrow(()->new ApiException(HttpStatus.NOT_FOUND,"Конвертация не найдена"));}
  public Page<ConversionResponse> history(UserAccount owner,int page,int size){return conversions.findByOwnerOrderByCreatedAtDesc(owner,PageRequest.of(page,size)).map(this::response);}
  private ConversionResponse response(Conversion c){return new ConversionResponse(c.getId(),c.getSourceName(),c.getSourceFormat(),c.getResultFormat(),c.getSourceSize(),c.getResultSize(),java.util.Date.from(c.getCreatedAt()),"/api/conversions/"+c.getId()+"/download");}
- public QuotaResponse quota(UserAccount owner,GuestUsage guest){if(owner!=null){if(owner.getRole()==Role.ADMIN)return new QuotaResponse(true,"ADMIN",-1,0,-1,0);Instant from=Instant.now().atZone(ZoneOffset.UTC).toLocalDate().atStartOfDay(ZoneOffset.UTC).toInstant();return new QuotaResponse(true,"CLIENT",150,conversions.countByOwnerAfter(owner,from),500L*1024*1024,conversions.sumSourceByOwnerAfter(owner,from));}return new QuotaResponse(false,"GUEST",10,guest==null?0:guest.getCount(),50L*1024*1024,0);}
+ public QuotaResponse quota(UserAccount owner,GuestUsage guest){if(owner!=null){if(owner.getRole()==Role.ADMIN)return new QuotaResponse(true,"ADMIN",-1,0,-1,0,0,0,null);Instant now=Instant.now();Instant from=now.atZone(ZoneOffset.UTC).toLocalDate().atStartOfDay(ZoneOffset.UTC).toInstant();long bonusConversions=owner.getActiveBonusDailyConversions(now);long bonusBytes=owner.getActiveBonusDailyBytes(now);return new QuotaResponse(true,"CLIENT",addLimit(150,bonusConversions),conversions.countByOwnerAfter(owner,from),addLimit(500L*1024*1024,bonusBytes),conversions.sumSourceByOwnerAfter(owner,from),bonusConversions,bonusBytes,owner.getActiveBonusExpiresAt(now));}return new QuotaResponse(false,"GUEST",10,guest==null?0:guest.getCount(),50L*1024*1024,0,0,0,null);}
  public StatisticsResponse stats(){return new StatisticsResponse(conversions.countAllConversions(),conversions.sumAllSourceBytes(),conversions.sumAllResultBytes(),serverMetrics.read());}
+ private long addLimit(long first,long second){try{return Math.addExact(first,second);}catch(ArithmeticException e){throw new ApiException(HttpStatus.BAD_REQUEST,"Превышено допустимое значение лимита");}}
 }

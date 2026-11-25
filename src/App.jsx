@@ -86,26 +86,28 @@ function formatUptime(milliseconds) {
 
 function AdminDashboard({ adminStats, adminStatsError }) {
   return (
-    <section className="admin-dashboard panel" aria-labelledby="admin-dashboard-title">
-      <header className="admin-dashboard-header">
-        <div>
-          <span className="section-kicker">АДМИНИСТРИРОВАНИЕ</span>
-          <h3 id="admin-dashboard-title">Состояние сервера</h3>
-          <p>Метрики обновляются автоматически каждые 5 секунд</p>
-        </div>
-        <span className={`admin-live-status ${adminStatsError ? "is-warning" : ""}`}>
-          <span />
-          {adminStatsError ? "НЕТ СВЕЖИХ ДАННЫХ" : adminStats ? "МОНИТОРИНГ АКТИВЕН" : "ПОДКЛЮЧЕНИЕ"}
-        </span>
-      </header>
-      {adminStatsError && (
-        <p className="admin-dashboard-error" role="alert">
-          Не удалось обновить метрики: {adminStatsError}
-        </p>
-      )}
-      {adminStats?.server ? (
-        <>
-          <div className="admin-metrics-grid">
+    <>
+      <AdminQuotaManager />
+      <section className="admin-dashboard panel" aria-labelledby="admin-dashboard-title">
+        <header className="admin-dashboard-header">
+          <div>
+            <span className="section-kicker">АДМИНИСТРИРОВАНИЕ</span>
+            <h3 id="admin-dashboard-title">Состояние сервера</h3>
+            <p>Метрики обновляются автоматически каждые 5 секунд</p>
+          </div>
+          <span className={`admin-live-status ${adminStatsError ? "is-warning" : ""}`}>
+            <span />
+            {adminStatsError ? "НЕТ СВЕЖИХ ДАННЫХ" : adminStats ? "МОНИТОРИНГ АКТИВЕН" : "ПОДКЛЮЧЕНИЕ"}
+          </span>
+        </header>
+        {adminStatsError && (
+          <p className="admin-dashboard-error" role="alert">
+            Не удалось обновить метрики: {adminStatsError}
+          </p>
+        )}
+        {adminStats?.server ? (
+          <>
+            <div className="admin-metrics-grid">
             <article className="admin-metric-card">
               <div className="admin-metric-topline">
                 <span>Загрузка CPU</span>
@@ -163,18 +165,157 @@ function AdminDashboard({ adminStats, adminStatsError }) {
               <strong>{adminStats.server.osName}</strong>
               <small>Java {adminStats.server.javaVersion}</small>
             </article>
+            </div>
+            <footer className="admin-dashboard-footer">
+              <span>Статистика обработок за всё время</span>
+              <span>CPU и память процесса доступны только администратору</span>
+            </footer>
+          </>
+        ) : adminStats ? (
+          <p className="admin-dashboard-error" role="alert">
+            Backend вернул устаревший формат метрик. Перезапустите backend.
+          </p>
+        ) : !adminStatsError && (
+          <div className="admin-dashboard-loading">Получаем метрики сервера…</div>
+        )}
+      </section>
+    </>
+  );
+}
+
+function AdminQuotaManager() {
+  const [users, setUsers] = useState([]);
+  const [selectedUserId, setSelectedUserId] = useState("");
+  const [search, setSearch] = useState("");
+  const [extraConversions, setExtraConversions] = useState("10");
+  const [extraMegabytes, setExtraMegabytes] = useState("100");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    api("/api/admin/users")
+      .then((data) => {
+        if (!Array.isArray(data)) throw new Error("Сервер вернул некорректный список пользователей");
+        if (active) {
+          setUsers(data);
+          setSelectedUserId(data.length ? String(data[0].id) : "");
+        }
+      })
+      .catch((requestError) => {
+        if (active) setError(requestError.message);
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => { active = false; };
+  }, []);
+
+  const matchingUsers = users.filter((user) =>
+    `${user.email} ${user.displayName || ""}`.toLowerCase().includes(search.trim().toLowerCase()));
+  const selectedUser = matchingUsers.find((user) => String(user.id) === selectedUserId);
+
+  async function submitBonus(event) {
+    event.preventDefault();
+    if (!selectedUser) return;
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      const updatedUser = await api(`/api/admin/users/${selectedUser.id}/bonus`, {
+        method: "POST",
+        body: JSON.stringify({
+          extraConversions: Number(extraConversions),
+          extraMegabytes: Number(extraMegabytes),
+        }),
+      });
+      setUsers((currentUsers) => currentUsers.map((user) =>
+        user.id === updatedUser.id ? updatedUser : user));
+      setNotice(`Бонус выдан пользователю ${updatedUser.email} на 24 часа.`);
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className="admin-dashboard admin-quota-dashboard panel" aria-labelledby="admin-quota-title">
+      <header className="admin-dashboard-header">
+        <div>
+          <span className="section-kicker">ЛИМИТЫ ПОЛЬЗОВАТЕЛЕЙ</span>
+          <h3 id="admin-quota-title">Выдать бонусный лимит</h3>
+          <p>Бонус добавляется к дневным лимитам и действует 24 часа</p>
+        </div>
+      </header>
+      {error && <p className="admin-dashboard-error" role="alert">{error}</p>}
+      {loading ? (
+        <div className="admin-dashboard-loading">Загружаем пользователей…</div>
+      ) : users.length === 0 ? (
+        <p className="admin-quota-empty">Зарегистрированных пользователей пока нет.</p>
+      ) : (
+        <form className="admin-quota-form" onSubmit={submitBonus}>
+          <label>
+            Поиск пользователя
+            <input
+              type="search"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Email или имя"
+            />
+          </label>
+          <label>
+            Пользователь
+            <select
+              required
+              value={selectedUser ? selectedUserId : ""}
+              onChange={(event) => setSelectedUserId(event.target.value)}
+            >
+              {!matchingUsers.length && <option value="" disabled>Пользователи не найдены</option>}
+              {matchingUsers.map((user) => (
+                <option key={user.id} value={user.id}>{user.displayName || user.email} · {user.email}</option>
+              ))}
+            </select>
+          </label>
+          <div className="admin-quota-fields">
+            <label>
+              Дополнительные конвертации
+              <input
+                type="number"
+                min="0"
+                max="100000"
+                step="1"
+                required
+                value={extraConversions}
+                onChange={(event) => setExtraConversions(event.target.value)}
+              />
+            </label>
+            <label>
+              Дополнительный объём, МБ
+              <input
+                type="number"
+                min="0"
+                max="102400"
+                step="1"
+                required
+                value={extraMegabytes}
+                onChange={(event) => setExtraMegabytes(event.target.value)}
+              />
+            </label>
           </div>
-          <footer className="admin-dashboard-footer">
-            <span>Статистика обработок за всё время</span>
-            <span>CPU и память процесса доступны только администратору</span>
-          </footer>
-        </>
-      ) : adminStats ? (
-        <p className="admin-dashboard-error" role="alert">
-          Backend вернул устаревший формат метрик. Перезапустите backend.
-        </p>
-      ) : !adminStatsError && (
-        <div className="admin-dashboard-loading">Получаем метрики сервера…</div>
+          {selectedUser && (
+            <p className="admin-quota-current">
+              Активный бонус: {selectedUser.bonusDailyConversions} конвертаций · {selectedUser.bonusDailyMegabytes} МБ
+              {selectedUser.bonusExpiresAt && ` до ${new Date(selectedUser.bonusExpiresAt).toLocaleString("ru-RU")}`}
+            </p>
+          )}
+          {notice && <p className="profile-success" role="status">{notice}</p>}
+          <button className="button button-primary admin-quota-submit" type="submit" disabled={saving || !selectedUser}>
+            {saving ? "Выдаём…" : "Выдать лимит"}
+          </button>
+        </form>
       )}
     </section>
   );
@@ -220,6 +361,7 @@ export default function App() {
   const [email, setEmail] = useState(localStorage.getItem("converter_email") || "");
   const [role, setRole] = useState(localStorage.getItem("converter_role") || "");
   const [quota, setQuota] = useState(null);
+  const [quotaError, setQuotaError] = useState("");
   const [adminStats, setAdminStats] = useState(null);
   const [adminStatsError, setAdminStatsError] = useState("");
   const [profile, setProfile] = useState(null);
@@ -252,7 +394,20 @@ export default function App() {
   }, [files]);
 
   useEffect(() => {
-    api("/api/quota").then(setQuota).catch(() => {});
+    let active = true;
+    api("/api/quota")
+      .then((currentQuota) => {
+        if (active) {
+          setQuota(currentQuota);
+          setQuotaError("");
+        }
+      })
+      .catch((error) => {
+        if (active) setQuotaError(`Не удалось загрузить лимиты: ${error.message}`);
+      });
+    return () => {
+      active = false;
+    };
   }, [email]);
 
   useEffect(() => {
@@ -434,6 +589,15 @@ export default function App() {
   const selectedFiles = files.filter((file) => selectedIds.includes(file.id));
   const totalSize = selectedFiles.reduce((sum, file) => sum + file.size, 0);
   const singleFile = files.length === 1 ? files[0] : null;
+  const quotaLimit = quota?.dailyLimit ?? 10;
+  const quotaUsed = quota?.dailyUsed ?? 0;
+  const quotaRemaining = quotaLimit === -1 ? -1 : Math.max(quotaLimit - quotaUsed, 0);
+  const quotaProgress = quotaLimit > 0
+    ? Math.min((quotaUsed / quotaLimit) * 100, 100)
+    : 0;
+  const remainingMegabytes = quota?.tier === "CLIENT"
+    ? Math.max(quota.totalLimitBytes - quota.totalUsedBytes, 0) / (1024 * 1024)
+    : null;
 
   const downloadResult = async (result) => {
     const blob = await api(result.downloadUrl);
@@ -479,6 +643,13 @@ export default function App() {
         if (resolution.height) body.append("height", resolution.height);
 
         const result = await api("/api/convert", { method: "POST", body });
+        try {
+          const currentQuota = await api("/api/quota");
+          setQuota(currentQuota);
+          setQuotaError("");
+        } catch (error) {
+          setQuotaError(`Не удалось обновить лимиты: ${error.message}`);
+        }
         let preparedResult = { ...result, downloadHref: null, downloadName: getDownloadName(result) };
         try {
           const blob = await api(result.downloadUrl);
@@ -493,7 +664,6 @@ export default function App() {
         setProgress(Math.round(((index + 1) / queue.length) * 100));
       }
 
-      api("/api/quota").then(setQuota).catch(() => {});
       converted.filter((result) => result.downloadHref)
         .forEach((result) => triggerDownload(result.downloadHref, result.downloadName));
     } catch (error) {
@@ -851,12 +1021,18 @@ export default function App() {
                 <span className="guest-pill"><span /> {role === "ADMIN" ? "Админ" : email ? "Клиент" : "Бесплатно"}</span>
               </div>
               <div className="quota-stats">
-                <div><strong>{quota?.dailyLimit === -1 ? "∞" : (quota?.dailyLimit ?? 10)}</strong><span>{email ? "обработок/день" : "обработок"}</span></div>
+                <div><strong>{quotaRemaining === -1 ? "∞" : quotaRemaining}</strong><span>{quota?.tier === "CLIENT" ? "осталось/день" : "осталось обработок"}</span></div>
                 <i />
-                <div><strong>{role === "ADMIN" ? "∞" : (email ? "500" : "50")} <small>МБ</small></strong><span>{email ? "в день" : "на файл"}</span></div>
+                <div><strong>{role === "ADMIN" ? "∞" : remainingMegabytes !== null ? remainingMegabytes.toLocaleString("ru-RU", { maximumFractionDigits: 2 }) : "50"} <small>МБ</small></strong><span>{remainingMegabytes !== null ? "осталось/день" : "на файл"}</span></div>
               </div>
-              <div className="quota-meter"><span /></div>
-              <div className="quota-foot"><span>Использовано обработок</span><strong>{quota?.dailyUsed ?? 0}{quota?.dailyLimit > 0 ? ` из ${quota.dailyLimit}` : ""}</strong></div>
+              <div className="quota-meter" role="progressbar" aria-label="Использование дневного лимита" aria-valuenow={quotaProgress} aria-valuemin="0" aria-valuemax="100"><span style={{ width: `${quotaProgress}%` }} /></div>
+              <div className="quota-foot"><span>Использовано обработок</span><strong>{quotaUsed}{quotaLimit > 0 ? ` из ${quotaLimit}` : ""}</strong></div>
+              {quota?.bonusExpiresAt && (
+                <div className="quota-bonus-note">
+                  Бонус: +{quota.bonusDailyConversions} конвертаций · +{(quota.bonusDailyBytes / (1024 * 1024)).toLocaleString("ru-RU")} МБ до {new Date(quota.bonusExpiresAt).toLocaleString("ru-RU")}
+                </div>
+              )}
+              {quotaError && <div className="quota-error" role="status">{quotaError}</div>}
               <div className="member-note">
                 <Icon name="lock" size={14} />
                 <span>{email ? "Лимит дневной:" : "После входа — до"} <strong>{email ? "150 обработок" : "150 обработок"}</strong><br />и суммарно <strong>{email ? "500 МБ" : "до 500 МБ"}</strong></span>

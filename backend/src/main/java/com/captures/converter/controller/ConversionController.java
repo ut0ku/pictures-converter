@@ -6,6 +6,7 @@ import com.captures.converter.service.ConversionService;
 import org.springframework.data.domain.Page;
 import org.springframework.http.*;
 import org.springframework.security.core.Authentication;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 import java.time.LocalDate;
@@ -23,11 +24,13 @@ public class ConversionController {
   UserAccount u=authentication==null?null:users.findByEmail(authentication.getName()).orElse(null);GuestUsage g=u==null?guestUsage.findByGuestKeyAndUsageDate(guestKey,LocalDate.now()).orElse(null):null;return conversions.quota(u,g);
  }
  @GetMapping("/conversions")
+ @Transactional(readOnly=true)
  public Page<ConversionResponse> history(Authentication authentication,@RequestParam(defaultValue="0")int page,@RequestParam(defaultValue="20")int size){
   if(authentication==null)throw new com.captures.converter.exception.ApiException(HttpStatus.UNAUTHORIZED,"Требуется авторизация");
   UserAccount u=users.findByEmail(authentication.getName()).orElseThrow();return conversions.history(u,page,size);
  }
  @GetMapping("/conversions/{id}/download")
+ @Transactional(readOnly=true)
  public ResponseEntity<byte[]> download(@PathVariable Long id,@RequestHeader(value="X-Guest-Key",defaultValue="")String guestKey,Authentication authentication){
   Conversion c=conversions.getConversion(id);String ext=c.getResultFormat().equals("JPG")?"jpg":c.getResultFormat().toLowerCase();
   boolean isOwner=authentication!=null&&c.getOwner()!=null&&c.getOwner().getEmail().equalsIgnoreCase(authentication.getName());

@@ -280,9 +280,11 @@ button { color: inherit; }
 .quota-stats > div span { color: var(--muted); font-size: 8px; }
 .quota-stats > i { height: 27px; width: 1px; background: var(--border-strong); }
 .quota-meter { height: 3px; overflow: hidden; border-radius: 5px; background: var(--border-strong); }
-.quota-meter span { display: block; width: 100%; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--accent), #eef0f3); opacity: .75; }
+.quota-meter span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--accent), #eef0f3); opacity: .75; transition: width .3s ease; }
 .quota-foot { display: flex; justify-content: space-between; margin-top: 6px; color: var(--subtle); font-size: 8px; }
 .quota-foot strong { color: var(--muted); font-weight: 500; }
+.quota-bonus-note { margin: 7px -11px 0; padding: 7px 10px; border-top: 1px solid var(--border); color: var(--accent); font-size: 8px; line-height: 1.5; }
+.quota-error { margin-top: 5px; color: var(--danger, #e06c75); font-size: 8px; }
 .member-note { display: flex; align-items: center; gap: 8px; margin: 10px -11px 0; padding: 8px 10px; border-top: 1px solid var(--border); color: var(--muted); font-size: 8px; line-height: 1.6; }
 .member-note > svg:first-child { flex: 0 0 auto; color: var(--accent); }
 .member-note > span { flex: 1; }
@@ -312,6 +314,16 @@ button { color: inherit; }
 .admin-dashboard-footer { display: flex; justify-content: space-between; gap: 15px; margin-top: 15px; color: var(--subtle); font-size: 10px; }
 .admin-dashboard-error { margin: 0 0 14px; color: #e6ad67; font-size: 12px; }
 .admin-dashboard-loading { padding: 28px 0; color: var(--muted); font-size: 12px; text-align: center; }
+.admin-quota-dashboard { margin-top: 12px; }
+.admin-quota-dashboard .admin-dashboard-header { margin-bottom: 14px; }
+.admin-quota-form { display: grid; gap: 12px; }
+.admin-quota-form label { display: grid; gap: 6px; color: var(--muted); font-size: 11px; font-weight: 600; }
+.admin-quota-form input, .admin-quota-form select { width: 100%; min-width: 0; height: 40px; padding: 0 11px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface-raised); color: var(--text); font: inherit; }
+.admin-quota-form select option { background: var(--surface-raised); color: var(--text); }
+.admin-quota-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.admin-quota-current, .admin-quota-empty { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.admin-quota-submit { justify-self: start; min-height: 40px; padding: 0 16px; font-size: 11px; }
+.admin-quota-submit:disabled { cursor: not-allowed; opacity: .55; }
 .processing-modal.profile-modal { width: min(960px, calc(100vw - 40px)); }
 .profile-modal > h2 { margin: 7px 0 18px; font-size: 25px; letter-spacing: -.8px; }
 .profile-summary { display: flex; align-items: center; gap: 12px; padding: 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-raised); }
@@ -502,6 +514,8 @@ button { color: inherit; }
   .admin-dashboard-footer { flex-direction: column; gap: 5px; }
   .admin-metrics-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .profile-modal .admin-dashboard { padding: 15px; }
+  .admin-quota-fields { grid-template-columns: 1fr; }
+  .admin-quota-submit { width: 100%; }
 }
 
 @media (max-width: 460px) {
