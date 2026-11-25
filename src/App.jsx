@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import InfoSections, { FormatMarquee } from "./InfoSections.jsx";
+import { api, saveAuth, clearAuth } from "./api.js";
 
 const formats = ["PNG", "JPG", "HEIC", "AVIF", "WEBP", "GIF", "TIFF"];
 const resolutionPresets = [640, 1080, 1920, 2560];
@@ -50,13 +51,148 @@ function Icon({ name, size = 18 }) {
 function formatBytes(bytes) {
   if (bytes < 1024) return `${bytes} Б`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} КБ`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} МБ`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} МБ`;
+  if (bytes < 1024 * 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} ГБ`;
+  return `${(bytes / (1024 * 1024 * 1024 * 1024)).toFixed(1)} ТБ`;
+}
+
+function formatLoad(load) {
+  return typeof load === "number" && Number.isFinite(load)
+    ? `${Math.round(load * 100)}%`
+    : "Н/Д";
+}
+
+function getLoadPercent(load) {
+  return typeof load === "number" && Number.isFinite(load)
+    ? Math.max(0, Math.min(100, load * 100))
+    : 0;
+}
+
+function getUsagePercent(used, total) {
+  return typeof used === "number" && typeof total === "number" && total > 0
+    ? Math.max(0, Math.min(100, (used / total) * 100))
+    : 0;
+}
+
+function formatUptime(milliseconds) {
+  const totalMinutes = Math.floor(milliseconds / 60000);
+  const days = Math.floor(totalMinutes / 1440);
+  const hours = Math.floor((totalMinutes % 1440) / 60);
+  const minutes = totalMinutes % 60;
+  if (days) return `${days} д ${hours} ч`;
+  if (hours) return `${hours} ч ${minutes} мин`;
+  return `${minutes} мин`;
+}
+
+function AdminDashboard({ adminStats, adminStatsError }) {
+  return (
+    <section className="admin-dashboard panel" aria-labelledby="admin-dashboard-title">
+      <header className="admin-dashboard-header">
+        <div>
+          <span className="section-kicker">АДМИНИСТРИРОВАНИЕ</span>
+          <h3 id="admin-dashboard-title">Состояние сервера</h3>
+          <p>Метрики обновляются автоматически каждые 5 секунд</p>
+        </div>
+        <span className={`admin-live-status ${adminStatsError ? "is-warning" : ""}`}>
+          <span />
+          {adminStatsError ? "НЕТ СВЕЖИХ ДАННЫХ" : adminStats ? "МОНИТОРИНГ АКТИВЕН" : "ПОДКЛЮЧЕНИЕ"}
+        </span>
+      </header>
+      {adminStatsError && (
+        <p className="admin-dashboard-error" role="alert">
+          Не удалось обновить метрики: {adminStatsError}
+        </p>
+      )}
+      {adminStats?.server ? (
+        <>
+          <div className="admin-metrics-grid">
+            <article className="admin-metric-card">
+              <div className="admin-metric-topline">
+                <span>Загрузка CPU</span>
+                <strong>{formatLoad(adminStats.server.systemCpuLoad)}</strong>
+              </div>
+              <div className="admin-metric-track">
+                <span style={{ width: `${getLoadPercent(adminStats.server.systemCpuLoad)}%` }} />
+              </div>
+              <small>Процесс приложения: {formatLoad(adminStats.server.processCpuLoad)}</small>
+            </article>
+            <article className="admin-metric-card">
+              <div className="admin-metric-topline">
+                <span>Память JVM</span>
+                <strong>{formatBytes(adminStats.server.heapUsedBytes)}</strong>
+              </div>
+              <div className="admin-metric-track">
+                <span style={{ width: `${getUsagePercent(adminStats.server.heapUsedBytes, adminStats.server.heapMaxBytes)}%` }} />
+              </div>
+              <small>Из {formatBytes(adminStats.server.heapMaxBytes)} · {Math.round(getUsagePercent(adminStats.server.heapUsedBytes, adminStats.server.heapMaxBytes))}% занято</small>
+            </article>
+            <article className="admin-metric-card">
+              <div className="admin-metric-topline">
+                <span>Память системы</span>
+                <strong>{adminStats.server.systemMemoryUsedBytes == null ? "Н/Д" : formatBytes(adminStats.server.systemMemoryUsedBytes)}</strong>
+              </div>
+              <div className="admin-metric-track">
+                <span style={{ width: `${getUsagePercent(adminStats.server.systemMemoryUsedBytes, adminStats.server.systemMemoryTotalBytes)}%` }} />
+              </div>
+              <small>{adminStats.server.systemMemoryTotalBytes == null
+                ? "Метрика недоступна на этой платформе"
+                : `Из ${formatBytes(adminStats.server.systemMemoryTotalBytes)} · ${Math.round(getUsagePercent(adminStats.server.systemMemoryUsedBytes, adminStats.server.systemMemoryTotalBytes))}% занято`}</small>
+            </article>
+            <article className="admin-metric-card">
+              <div className="admin-metric-topline">
+                <span>Конвертации</span>
+                <strong>{adminStats.conversions.toLocaleString("ru-RU")}</strong>
+              </div>
+              <div className="admin-metric-detail">
+                <span>Загружено <b>{formatBytes(adminStats.sourceBytes)}</b></span>
+                <span>Результаты <b>{formatBytes(adminStats.resultBytes)}</b></span>
+              </div>
+            </article>
+            <article className="admin-metric-card">
+              <div className="admin-metric-topline">
+                <span>Время работы</span>
+                <strong>{formatUptime(adminStats.server.uptimeMillis)}</strong>
+              </div>
+              <div className="admin-metric-detail">
+                <span>Ядер доступно <b>{adminStats.server.availableProcessors}</b></span>
+                <span>Потоков JVM <b>{adminStats.server.threadCount}</b></span>
+              </div>
+            </article>
+            <article className="admin-metric-card admin-runtime-card">
+              <span>Среда выполнения</span>
+              <strong>{adminStats.server.osName}</strong>
+              <small>Java {adminStats.server.javaVersion}</small>
+            </article>
+          </div>
+          <footer className="admin-dashboard-footer">
+            <span>Статистика обработок за всё время</span>
+            <span>CPU и память процесса доступны только администратору</span>
+          </footer>
+        </>
+      ) : adminStats ? (
+        <p className="admin-dashboard-error" role="alert">
+          Backend вернул устаревший формат метрик. Перезапустите backend.
+        </p>
+      ) : !adminStatsError && (
+        <div className="admin-dashboard-loading">Получаем метрики сервера…</div>
+      )}
+    </section>
+  );
 }
 
 function getFileFormat(file) {
   const fromType = file.type.split("/")[1];
   const fromName = file.name.split(".").pop();
   return (fromType || fromName || "IMG").replace("jpeg", "jpg").toUpperCase();
+}
+
+function getAspectRatio(width, height) {
+  const numericWidth = Number(width);
+  const numericHeight = Number(height);
+  return Number.isFinite(numericWidth) && Number.isFinite(numericHeight)
+    && numericWidth > 0 && numericHeight > 0
+    ? numericHeight / numericWidth
+    : null;
 }
 
 export default function App() {
@@ -72,8 +208,30 @@ export default function App() {
   const [progress, setProgress] = useState(0);
   const [scrolled, setScrolled] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [authOpen, setAuthOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [authMode, setAuthMode] = useState("login");
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authError, setAuthError] = useState("");
+  const [serverError, setServerError] = useState("");
+  const [downloadError, setDownloadError] = useState("");
+  const [results, setResults] = useState([]);
+  const [email, setEmail] = useState(localStorage.getItem("converter_email") || "");
+  const [role, setRole] = useState(localStorage.getItem("converter_role") || "");
+  const [quota, setQuota] = useState(null);
+  const [adminStats, setAdminStats] = useState(null);
+  const [adminStatsError, setAdminStatsError] = useState("");
+  const [profile, setProfile] = useState(null);
+  const [profileName, setProfileName] = useState("");
+  const [profileLoading, setProfileLoading] = useState(false);
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [profileError, setProfileError] = useState("");
+  const [profileNotice, setProfileNotice] = useState("");
   const inputRef = useRef(null);
   const filesRef = useRef([]);
+  const aspectRatioRef = useRef(null);
+  const downloadUrlsRef = useRef(new Set());
 
   useEffect(() => {
     const updateScrollState = () => setScrolled(window.scrollY > 12);
@@ -93,29 +251,121 @@ export default function App() {
     filesRef.current = files;
   }, [files]);
 
-  useEffect(() => () => {
-    filesRef.current.forEach((file) => URL.revokeObjectURL(file.url));
-  }, []);
+  useEffect(() => {
+    api("/api/quota").then(setQuota).catch(() => {});
+  }, [email]);
 
   useEffect(() => {
-    if (!isProcessing) return undefined;
-    const timer = window.setInterval(() => {
-      setProgress((value) => {
-        if (value >= 100) {
-          window.clearInterval(timer);
-          return 100;
+    if (role !== "ADMIN" || !profileOpen) {
+      setAdminStats(null);
+      setAdminStatsError("");
+      return undefined;
+    }
+
+    let active = true;
+    let timeoutId;
+    const refreshStats = async () => {
+      try {
+        const stats = await api("/api/admin/stats");
+        if (active) {
+          setAdminStats(stats);
+          setAdminStatsError("");
         }
-        return Math.min(value + 4, 100);
+      } catch (error) {
+        if (active) setAdminStatsError(error.message);
+      } finally {
+        if (active) timeoutId = window.setTimeout(refreshStats, 5000);
+      }
+    };
+
+    refreshStats();
+    return () => {
+      active = false;
+      window.clearTimeout(timeoutId);
+    };
+  }, [profileOpen, role]);
+
+  useEffect(() => {
+    if (!profileOpen || !email) return undefined;
+    let active = true;
+    setProfileLoading(true);
+    setProfileError("");
+    setProfileNotice("");
+    api("/api/auth/me")
+      .then((data) => {
+        if (active) {
+          setProfile(data);
+          setProfileName(data.displayName || "");
+        }
+      })
+      .catch((error) => {
+        if (active) setProfileError(error.message);
+      })
+      .finally(() => {
+        if (active) setProfileLoading(false);
       });
-    }, 100);
-    return () => window.clearInterval(timer);
-  }, [isProcessing]);
+    return () => {
+      active = false;
+    };
+  }, [email, profileOpen]);
+
+  const submitAuth = async (event) => {
+    event.preventDefault();
+    setAuthError("");
+    try {
+      const data = await api(`/api/auth/${authMode}`, {
+        method: "POST",
+        body: JSON.stringify({ email: authEmail, password: authPassword }),
+      });
+      saveAuth(data);
+      setEmail(data.email);
+      setRole(data.role);
+      setAuthOpen(false);
+    } catch (error) {
+      setAuthError(error.message);
+    }
+  };
+
+  const logout = () => {
+    clearAuth();
+    setEmail("");
+    setRole("");
+    setProfile(null);
+    setProfileName("");
+    setProfileOpen(false);
+  };
+
+  const saveProfile = async (event) => {
+    event.preventDefault();
+    setProfileError("");
+    setProfileNotice("");
+    setProfileSaving(true);
+    try {
+      const updated = await api("/api/auth/profile", {
+        method: "PATCH",
+        body: JSON.stringify({ displayName: profileName }),
+      });
+      setProfile(updated);
+      setProfileName(updated.displayName || "");
+      setProfileNotice("Имя сохранено");
+    } catch (error) {
+      setProfileError(error.message);
+    } finally {
+      setProfileSaving(false);
+    }
+  };
+
+  useEffect(() => () => {
+    filesRef.current.forEach((file) => URL.revokeObjectURL(file.url));
+    downloadUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+  }, []);
 
   const addFiles = (incoming) => {
     const accepted = Array.from(incoming).filter((file) => file.type.startsWith("image/"));
     if (!accepted.length) return;
     const next = accepted.map((file) => ({
       id: `${file.name}-${file.size}-${file.lastModified}-${Math.random()}`,
+      raw: file,
       name: file.name,
       size: file.size,
       format: getFileFormat(file),
@@ -126,6 +376,9 @@ export default function App() {
 
     const image = new Image();
     image.onload = () => {
+      if (aspectRatioRef.current === null) {
+        aspectRatioRef.current = image.naturalHeight / image.naturalWidth;
+      }
       setResolution((current) => current.width || current.height
         ? current
         : { width: String(image.naturalWidth), height: String(image.naturalHeight) });
@@ -147,30 +400,34 @@ export default function App() {
   };
 
   const updateResolution = (dimension, value) => {
-    setResolution((current) => {
-      const currentWidth = Number(current.width);
-      const currentHeight = Number(current.height);
-      const changedValue = Number(value);
-      if (!isResolutionLinked || !value || !Number.isFinite(changedValue) || changedValue <= 0
-        || !Number.isFinite(currentWidth) || !Number.isFinite(currentHeight) || currentWidth <= 0 || currentHeight <= 0) {
-        return { ...current, [dimension]: value };
-      }
+    const changedValue = Number(value);
+    if (!isResolutionLinked || !value || !Number.isFinite(changedValue) || changedValue <= 0) {
+      setResolution((current) => ({ ...current, [dimension]: value }));
+      return;
+    }
 
-      const ratio = currentHeight / currentWidth;
-      return dimension === "width"
-        ? { width: value, height: String(Math.max(1, Math.round(changedValue * ratio))) }
-        : { width: String(Math.max(1, Math.round(changedValue / ratio))), height: value };
-    });
+    const ratio = aspectRatioRef.current ?? getAspectRatio(resolution.width, resolution.height);
+    if (ratio === null) {
+      setResolution((current) => ({ ...current, [dimension]: value }));
+      return;
+    }
+
+    aspectRatioRef.current = ratio;
+    setResolution(dimension === "width"
+      ? { width: value, height: String(Math.max(1, Math.round(changedValue * ratio))) }
+      : { width: String(Math.max(1, Math.round(changedValue / ratio))), height: value });
   };
 
   const applyResolutionPreset = (width) => {
-    setResolution((current) => {
-      const currentWidth = Number(current.width);
-      const currentHeight = Number(current.height);
-      const height = isResolutionLinked && currentWidth > 0 && currentHeight > 0
-        ? String(Math.max(1, Math.round(width * currentHeight / currentWidth)))
-        : current.height;
-      return { width: String(width), height };
+    const ratio = aspectRatioRef.current ?? getAspectRatio(resolution.width, resolution.height);
+    if (!isResolutionLinked || ratio === null) {
+      setResolution((current) => ({ ...current, width: String(width) }));
+      return;
+    }
+    aspectRatioRef.current = ratio;
+    setResolution({
+      width: String(width),
+      height: String(Math.max(1, Math.round(width * ratio))),
     });
   };
 
@@ -178,10 +435,70 @@ export default function App() {
   const totalSize = selectedFiles.reduce((sum, file) => sum + file.size, 0);
   const singleFile = files.length === 1 ? files[0] : null;
 
-  const startProcessing = () => {
+  const downloadResult = async (result) => {
+    const blob = await api(result.downloadUrl);
+    const url = URL.createObjectURL(blob);
+    downloadUrlsRef.current.add(url);
+    triggerDownload(url, getDownloadName(result));
+  };
+
+  const getDownloadName = (result) => {
+    const extension = result.resultFormat.toLowerCase() === "jpg" ? "jpg" : result.resultFormat.toLowerCase();
+    return `${result.sourceName.replace(/\.[^.]+$/, "")}.${extension}`;
+  };
+
+  const triggerDownload = (url, filename) => {
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  };
+
+  const startProcessing = async () => {
     if (!selectedFiles.length) return;
+    downloadUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+    downloadUrlsRef.current.clear();
+    setServerError("");
+    setDownloadError("");
+    setResults([]);
     setProgress(0);
     setIsProcessing(true);
+    const queue = [...selectedFiles];
+    const converted = [];
+
+    try {
+      for (let index = 0; index < queue.length; index += 1) {
+        const file = queue[index];
+        const body = new FormData();
+        body.append("file", file.raw);
+        body.append("format", format);
+        body.append("quality", String(quality));
+        if (resolution.width) body.append("width", resolution.width);
+        if (resolution.height) body.append("height", resolution.height);
+
+        const result = await api("/api/convert", { method: "POST", body });
+        let preparedResult = { ...result, downloadHref: null, downloadName: getDownloadName(result) };
+        try {
+          const blob = await api(result.downloadUrl);
+          const downloadHref = URL.createObjectURL(blob);
+          downloadUrlsRef.current.add(downloadHref);
+          preparedResult = { ...preparedResult, downloadHref };
+        } catch (error) {
+          setDownloadError(error.message);
+        }
+        converted.push(preparedResult);
+        setResults([...converted]);
+        setProgress(Math.round(((index + 1) / queue.length) * 100));
+      }
+
+      api("/api/quota").then(setQuota).catch(() => {});
+      converted.filter((result) => result.downloadHref)
+        .forEach((result) => triggerDownload(result.downloadHref, result.downloadName));
+    } catch (error) {
+      setServerError(error.message);
+    }
   };
 
   return (
@@ -200,9 +517,16 @@ export default function App() {
               {navigation.map((item) => <a key={item.href} href={item.href}>{item.label}</a>)}
             </div>
             <div className="top-actions">
-              <a className="nav-icon-button" href="#limits" aria-label="Войти в аккаунт" title="Войти в аккаунт">
+              <button
+                className={`nav-icon-button ${email ? "nav-profile-button" : ""}`}
+                type="button"
+                onClick={() => email ? setProfileOpen(true) : setAuthOpen(true)}
+                aria-label={email ? "Открыть профиль" : "Войти"}
+                title={email ? (profile?.displayName || email) : "Войти"}
+              >
                 <Icon name="user" size={17} />
-              </a>
+                {email && <span>Профиль</span>}
+              </button>
               <button
                 className="theme-toggle"
                 type="button"
@@ -463,7 +787,13 @@ export default function App() {
                   className={`resolution-link-toggle ${isResolutionLinked ? "is-linked" : ""}`}
                   type="button"
                   aria-pressed={isResolutionLinked}
-                  onClick={() => setIsResolutionLinked((current) => !current)}
+                  onClick={() => {
+                    if (!isResolutionLinked) {
+                      const ratio = getAspectRatio(resolution.width, resolution.height);
+                      if (ratio !== null) aspectRatioRef.current = ratio;
+                    }
+                    setIsResolutionLinked((current) => !current);
+                  }}
                 >
                   <span className="resolution-switch" aria-hidden="true"><span /></span>
                   <Icon name={isResolutionLinked ? "link" : "unlink"} size={13} />
@@ -518,18 +848,18 @@ export default function App() {
             <div className="quota-card" id="limits">
               <div className="quota-topline">
                 <span className="quota-label">ВАШ ТАРИФ</span>
-                <span className="guest-pill"><span /> Бесплатно</span>
+                <span className="guest-pill"><span /> {role === "ADMIN" ? "Админ" : email ? "Клиент" : "Бесплатно"}</span>
               </div>
               <div className="quota-stats">
-                <div><strong>10</strong><span>обработок</span></div>
+                <div><strong>{quota?.dailyLimit === -1 ? "∞" : (quota?.dailyLimit ?? 10)}</strong><span>{email ? "обработок/день" : "обработок"}</span></div>
                 <i />
-                <div><strong>50 <small>МБ</small></strong><span>на файл</span></div>
+                <div><strong>{role === "ADMIN" ? "∞" : (email ? "500" : "50")} <small>МБ</small></strong><span>{email ? "в день" : "на файл"}</span></div>
               </div>
               <div className="quota-meter"><span /></div>
-              <div className="quota-foot"><span>Доступно обработок</span><strong>10 из 10</strong></div>
+              <div className="quota-foot"><span>Использовано обработок</span><strong>{quota?.dailyUsed ?? 0}{quota?.dailyLimit > 0 ? ` из ${quota.dailyLimit}` : ""}</strong></div>
               <div className="member-note">
                 <Icon name="lock" size={14} />
-                <span>После входа — до <strong>150 обработок</strong><br />и файлы размером до <strong>500 МБ</strong></span>
+                <span>{email ? "Лимит дневной:" : "После входа — до"} <strong>{email ? "150 обработок" : "150 обработок"}</strong><br />и суммарно <strong>{email ? "500 МБ" : "до 500 МБ"}</strong></span>
                 <Icon name="arrow" size={13} />
               </div>
             </div>
@@ -547,7 +877,7 @@ export default function App() {
               >
                 <Icon name="sparkles" size={17} /> Конвертировать <Icon name="arrow" size={16} />
               </button>
-              <p className="privacy-note"><Icon name="lock" size={12} /> Ваши файлы остаются на вашем устройстве</p>
+              <p className="privacy-note"><Icon name="lock" size={12} /> Файлы обрабатываются на сервере для конвертации</p>
             </div>
           </aside>
         </div>
@@ -572,6 +902,78 @@ export default function App() {
         </div>
       </footer>
 
+      {authOpen && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && setAuthOpen(false)}>
+          <section className="processing-modal auth-modal" role="dialog" aria-modal="true" aria-labelledby="auth-title">
+            <button className="modal-close icon-button" type="button" onClick={() => setAuthOpen(false)} aria-label="Закрыть"><Icon name="close" size={18} /></button>
+            <span className="section-kicker">{authMode === "login" ? "ВОЙТИ" : "РЕГИСТРАЦИЯ"}</span>
+            <h2 id="auth-title">{authMode === "login" ? "Аккаунт конвертера" : "Создать аккаунт"}</h2>
+            <form className="auth-form" onSubmit={submitAuth}>
+              <input type="email" required placeholder="Email" value={authEmail} onChange={(event) => setAuthEmail(event.target.value)} />
+              <input type="password" required minLength={8} placeholder="Пароль (минимум 8)" value={authPassword} onChange={(event) => setAuthPassword(event.target.value)} />
+              {authError && <p className="auth-error">{authError}</p>}
+              <button className="button button-primary modal-done" type="submit">{authMode === "login" ? "Войти" : "Создать аккаунт"}</button>
+              <button className="text-button auth-switch" type="button" onClick={() => setAuthMode((mode) => mode === "login" ? "register" : "login")}>
+                {authMode === "login" ? "Нет аккаунта? Зарегистрироваться" : "Уже есть аккаунт? Войти"}
+              </button>
+            </form>
+          </section>
+        </div>
+      )}
+
+      {profileOpen && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && setProfileOpen(false)}>
+          <section className="processing-modal profile-modal" role="dialog" aria-modal="true" aria-labelledby="profile-title">
+            <button className="modal-close icon-button" type="button" onClick={() => setProfileOpen(false)} aria-label="Закрыть профиль">
+              <Icon name="close" size={18} />
+            </button>
+            <span className="section-kicker">АККАУНТ</span>
+            <h2 id="profile-title">Профиль</h2>
+            {profileLoading ? (
+              <div className="admin-dashboard-loading">Загружаем профиль…</div>
+            ) : profile ? (
+              <>
+                <div className="profile-summary">
+                  <span className="profile-avatar"><Icon name="user" size={22} /></span>
+                  <div className="profile-identity">
+                    <strong>{profile.displayName || profile.email}</strong>
+                    <span>{profile.email}</span>
+                  </div>
+                  <span className="profile-role">{profile.role === "ADMIN" ? "Администратор" : "Клиент"}</span>
+                </div>
+                <form className="profile-form" onSubmit={saveProfile}>
+                  <label htmlFor="profile-display-name">Ваше имя</label>
+                  <div className="profile-edit-row">
+                    <input
+                      id="profile-display-name"
+                      type="text"
+                      autoComplete="name"
+                      maxLength={60}
+                      required
+                      value={profileName}
+                      placeholder="Как к вам обращаться"
+                      onChange={(event) => {
+                        setProfileName(event.target.value);
+                        setProfileNotice("");
+                      }}
+                    />
+                    <button className="button button-primary" type="submit" disabled={profileSaving || !profileName.trim()}>
+                      {profileSaving ? "Сохраняем…" : "Сохранить"}
+                    </button>
+                  </div>
+                  {profileError && <p className="auth-error" role="alert">{profileError}</p>}
+                  {profileNotice && <p className="profile-success" role="status">{profileNotice}</p>}
+                </form>
+                <button className="text-button profile-logout" type="button" onClick={logout}>Выйти из аккаунта</button>
+              </>
+            ) : (
+              <p className="admin-dashboard-error" role="alert">{profileError || "Не удалось загрузить профиль."}</p>
+            )}
+            {role === "ADMIN" && <AdminDashboard adminStats={adminStats} adminStatsError={adminStatsError} />}
+          </section>
+        </div>
+      )}
+
       {isProcessing && (
         <div className="modal-backdrop" role="presentation" onMouseDown={(event) => {
           if (event.target === event.currentTarget && progress === 100) setIsProcessing(false);
@@ -583,21 +985,30 @@ export default function App() {
             <div className={`processing-icon ${progress === 100 ? "complete" : ""}`}>
               <Icon name={progress === 100 ? "check" : "sparkles"} size={24} />
             </div>
-            <span className="section-kicker">{progress === 100 ? "ДЕМО ЗАВЕРШЕНО" : "ПОДГОТОВКА ФАЙЛОВ"}</span>
-            <h2 id="modal-title">{progress === 100 ? "Всё готово!" : "Создаём ваш результат"}</h2>
+            <span className="section-kicker">
+              {serverError ? "ОШИБКА ОБРАБОТКИ" : progress === 100 ? "ОБРАБОТКА ЗАВЕРШЕНА" : "ПОДГОТОВКА ФАЙЛОВ"}
+            </span>
+            <h2 id="modal-title">
+              {serverError ? "Не удалось обработать файлы" : progress === 100 ? "Всё готово!" : "Создаём ваш результат"}
+            </h2>
             <p className="modal-description">
-              {progress === 100
-                ? "Это демонстрация интерфейса — конвертация файлов пока не выполняется."
+              {serverError
+                ? serverError
+                : progress === 100
+                ? "Файлы обработаны. Если браузер заблокировал автоматическое скачивание, используйте ссылку ниже."
                 : `${selectedFiles.length} ${selectedFiles.length === 1 ? "изображение" : "изображений"} · формат ${format}`}
             </p>
-            <div className="progress-info"><span>{progress === 100 ? "Предпросмотр завершён" : "Обработка изображений"}</span><strong>{progress}%</strong></div>
+            <div className="progress-info">
+              <span>{serverError ? "Обработка остановлена" : progress === 100 ? "Файлы готовы к скачиванию" : "Обработка изображений"}</span>
+              <strong>{progress}%</strong>
+            </div>
             <div
               className="progress-track"
               role="progressbar"
               aria-valuenow={progress}
               aria-valuemin={0}
               aria-valuemax={100}
-              aria-label="Демонстрационный прогресс"
+              aria-label="Прогресс обработки"
             ><span style={{ width: `${progress}%` }} /></div>
             <div className="modal-file-list">
               {selectedFiles.slice(0, 3).map((file) => (
@@ -609,7 +1020,37 @@ export default function App() {
               ))}
               {selectedFiles.length > 3 && <span className="more-files">и ещё {selectedFiles.length - 3}</span>}
             </div>
-            {progress === 100 && <button className="button button-primary modal-done" type="button" onClick={() => setIsProcessing(false)}>Понятно</button>}
+            {downloadError && <p className="auth-error">{downloadError}</p>}
+            {results.length > 0 && (
+              <div className="modal-results">
+                {results.map((result) => (
+                  result.downloadHref ? (
+                    <a
+                      className="button button-primary modal-done"
+                      href={result.downloadHref}
+                      download={result.downloadName}
+                      key={result.id}
+                    >
+                      Скачать {result.sourceName}
+                    </a>
+                  ) : <button
+                    className="button button-primary modal-done"
+                    type="button"
+                    key={result.id}
+                    onClick={async () => {
+                      setDownloadError("");
+                      try {
+                        await downloadResult(result);
+                      } catch (error) {
+                        setDownloadError(error.message);
+                      }
+                    }}
+                  >
+                    Скачать {result.sourceName}
+                  </button>
+                ))}
+              </div>
+            )}
           </section>
         </div>
       )}
