@@ -1,102 +1,106 @@
-# Captures Converter
+# Конвертер изображений Captures
 
-React/Vite frontend + Spring Boot/Maven/PostgreSQL backend.
+Веб-приложение для конвертации изображений. Клиентская часть создана на React и Vite, серверная — на Spring Boot и Maven, для хранения данных используется PostgreSQL.
 
-## Запуск
+## Запуск в Docker
 
 ```powershell
 Copy-Item .env.example .env
-# Заполните секретные значения в .env
+# Заполните секретные переменные в файле .env
 docker compose up --build
 ```
 
-Compose starts PostgreSQL, the Spring Boot backend, and the built React frontend.
-The new Docker database is empty; it does not import data from a PostgreSQL server
-already installed on the host. Its data persists in the `captures-db-data` volume.
-The database port is not published to the host, so it does not conflict with a
-local PostgreSQL server. `docker compose down` keeps the data; `docker compose down
--v` deletes the database volume.
+Docker Compose запускает PostgreSQL, серверную часть на Spring Boot и собранный интерфейс на React.
+Создаваемая база данных пуста: данные из PostgreSQL, установленного на компьютере, не копируются.
+Данные контейнера сохраняются в томе `captures-db-data`. Порт базы данных не публикуется на компьютере,
+поэтому контейнер не конфликтует с локальным PostgreSQL. Команда `docker compose down` сохраняет данные,
+а `docker compose down -v` удаляет том вместе с базой.
 
-Frontend: `http://localhost:5173`, backend: `http://localhost:8080`,
-Swagger: `http://localhost:8080/swagger-ui.html`.
+Интерфейс: `http://localhost:5173`, сервер API: `http://localhost:8080`,
+документация API Swagger: `http://localhost:8080/swagger-ui.html`.
 
-Set `ADMIN_EMAIL` and `ADMIN_PASSWORD` in `.env` to create the administrator
-account. Keep `.env` private and do not commit it. For PowerShell:
+Чтобы создать учётную запись администратора, укажите `ADMIN_EMAIL` и `ADMIN_PASSWORD`
+в файле `.env`. Не публикуйте этот файл и не добавляйте его в Git. Пример для PowerShell:
 
 ```powershell
 $env:ADMIN_EMAIL = "admin@example.com"
-$env:ADMIN_PASSWORD = "your-strong-password"
+$env:ADMIN_PASSWORD = "надежный-пароль"
 docker compose up --build
 ```
 
-The admin account is created only when the configured email does not already exist
-in the database.
+Учётная запись администратора создаётся, только если указанный адрес ещё не зарегистрирован в базе данных.
 
-Локальный frontend:
+## Локальный запуск интерфейса
 
 ```bash
 npm install
 npm run dev
 ```
 
-Vite проксирует `/api` на `http://localhost:8080`, поэтому в локальной разработке отдельная настройка CORS не требуется. Для production задайте `VITE_API_URL` адресом backend API.
+Vite перенаправляет запросы `/api` на `http://localhost:8080`, поэтому при локальной разработке
+дополнительная настройка CORS не нужна. Для рабочей среды укажите в `VITE_API_URL` адрес сервера API.
 
-Локальный backend без Docker:
+## Локальный запуск сервера без Docker
 
 ```bash
 cd backend
 mvn spring-boot:run
 ```
 
-Для локального запуска PostgreSQL должен быть доступен по переменным из `application.yml`.
+Для запуска PostgreSQL должен быть доступен, а параметры подключения — заданы в `application.yml`.
 
-Frontend: `http://localhost:5173`, backend: `http://localhost:8080`,
-Swagger: `http://localhost:8080/swagger-ui.html`.
+Интерфейс: `http://localhost:5173`, сервер API: `http://localhost:8080`,
+документация API Swagger: `http://localhost:8080/swagger-ui.html`.
 
-## Environment
+## Переменные окружения
 
-| Variable | Default |
+| Переменная | Значение или описание |
 |---|---|
-| `SPRING_DATASOURCE_URL` | `jdbc:postgresql://db:5432/captures` in Docker |
+| `SPRING_DATASOURCE_URL` | В Docker: `jdbc:postgresql://db:5432/captures` |
 | `SPRING_DATASOURCE_USERNAME` | `postgres` |
-| `SPRING_DATASOURCE_PASSWORD` | `POSTGRES_PASSWORD` from `.env` |
+| `SPRING_DATASOURCE_PASSWORD` | Значение `POSTGRES_PASSWORD` из `.env` |
 | `POSTGRES_DB` | `captures` |
 | `POSTGRES_USER` | `postgres` |
-| `POSTGRES_PASSWORD` | required in `.env` |
-| `JWT_SECRET` | required in `.env`; use a unique value |
+| `POSTGRES_PASSWORD` | Обязательная переменная в `.env` |
+| `JWT_SECRET` | Обязательная переменная в `.env`; задайте уникальное значение |
 | `JWT_ACCESS_MINUTES` | `15` |
 | `JWT_REFRESH_DAYS` | `30` |
 | `CORS_ORIGINS` | `http://localhost:5173` |
 | `MAX_UPLOAD_SIZE` | `500MB` |
 | `MAX_REQUEST_SIZE` | `500MB` |
-| `VITE_API_URL` | empty (Vite `/api` proxy in development) |
+| `VITE_API_URL` | Пустое значение: в режиме разработки используется прокси Vite `/api` |
 | `ADMIN_EMAIL` | `admin@example.com` |
-| `ADMIN_PASSWORD` | optional; set in `.env` to seed an admin |
+| `ADMIN_PASSWORD` | Необязательная переменная; задайте её в `.env`, чтобы создать администратора |
 
-## API tests
+## Проверка API
 
-The pytest suite exercises every controller endpoint against the running backend,
-including account registration/login/refresh, profile, quota, image conversion,
-download, history, and admin statistics.
+Набор тестов pytest проверяет конечные точки контроллеров на запущенном сервере:
+регистрацию и вход в аккаунт, обновление токена, профиль, квоты, конвертацию изображений,
+скачивание файлов, историю и статистику администратора.
 
 ```powershell
 python -m pip install -r requirements-test.txt
 python -m pytest
 ```
 
-Tests use `http://localhost:8080` by default. Set `API_BASE_URL`, `ADMIN_EMAIL`,
-and `ADMIN_PASSWORD` in the same shell to run admin endpoint tests; admin tests
-are skipped when `ADMIN_PASSWORD` is not set.
+По умолчанию тесты обращаются к `http://localhost:8080`. Чтобы проверить конечные точки
+администратора, задайте в той же командной оболочке переменные `API_BASE_URL`, `ADMIN_EMAIL`
+и `ADMIN_PASSWORD`. Если `ADMIN_PASSWORD` не задан, тесты функций администратора пропускаются.
 
-## Лимиты
+## Ограничения и дополнительные квоты
 
-Гость: 10 обработок за дату гостевого ключа (`X-Guest-Key`) и максимум 50 MB на один файл.
-Клиент: максимум 150 обработок за UTC-день, максимум 500 MB на один файл и суммарно 500 MB исходных файлов за тот же день.
-Размер 500 MB — сумма исходных файлов, а не одновременный размер batch. Админ без обычных лимитов.
-Администратор может выдать клиенту дополнительное число обработок и/или объём на 24 часа. Бонус складывается с активным бонусом, увеличивает дневные лимиты, а после истечения стандартные ограничения восстанавливаются.
-Каждое исходное и результирующее изображение хранится в PostgreSQL как `@Lob`/bytea-equivalent JPA data; local filesystem не используется.
+Гость может выполнить 10 обработок за период действия гостевого ключа (`X-Guest-Key`).
+Размер одного файла не должен превышать 50 МБ.
+Авторизованный пользователь может выполнить до 150 обработок в день по времени UTC.
+Размер одного файла и суммарный размер исходных файлов за день не должны превышать 500 МБ.
+Суммарный лимит учитывает размер исходных файлов, а не размер всего пакета в памяти.
+На администратора обычные ограничения не распространяются.
 
-## API
+Администратор может на 24 часа увеличить квоту пользователя по количеству обработок и/или объёму данных.
+Дополнительные квоты суммируются с ещё действующими бонусами; после истечения срока стандартные ограничения восстанавливаются.
+Исходные и обработанные изображения хранятся в PostgreSQL через JPA (`@Lob`, тип `bytea`); файловая система сервера не используется.
+
+## Примеры запросов к API
 
 ```bash
 curl -X POST http://localhost:8080/api/auth/register \
@@ -127,21 +131,33 @@ curl -X POST http://localhost:8080/api/admin/users/USER_ID/bonus \
   -d '{"extraConversions":25,"extraMegabytes":100}'
 ```
 
-Admin statistics include total conversions and data volume, system/process CPU load, JVM heap, host memory when supported, uptime, thread count, and runtime details. The admin dashboard refreshes these metrics every 5 seconds; the endpoint requires the `ADMIN` role.
-`GET /api/admin/users` lists registered clients, and `POST /api/admin/users/{id}/bonus` grants bonus limits for 24 hours. Both endpoints require the `ADMIN` role; each grant accepts 0–100,000 conversions and 0–102,400 MB, with at least one nonzero value.
+Статистика администратора содержит общее число конвертаций и объём данных, загрузку процессора,
+использование памяти JVM и хоста (если данные доступны), время работы сервера, число потоков и сведения
+о среде выполнения. Панель администратора обновляет показатели каждые 5 секунд. Для доступа к статистике
+нужна роль `ADMIN`.
 
-Refresh:
+Запрос `GET /api/admin/users` возвращает список зарегистрированных пользователей.
+Запрос `POST /api/admin/users/{id}/bonus` выдаёт дополнительные квоты на 24 часа.
+Для обоих запросов нужна роль `ADMIN`. За один раз можно выдать от 0 до 100 000 обработок
+и от 0 до 102 400 МБ; хотя бы одно из значений должно быть больше нуля.
+
+Обновление токена:
 
 ```bash
 curl -X POST http://localhost:8080/api/auth/refresh \
   -H 'Content-Type: application/json' -d '{"refreshToken":"REFRESH_TOKEN"}'
 ```
 
-Authenticated users can view and update their profile name via `GET /api/auth/me` and `PATCH /api/auth/profile` with `{"displayName":"Your name"}`. The admin server metrics are shown in the profile dialog.
+Авторизованный пользователь может посмотреть свои данные через `GET /api/auth/me`
+и изменить имя запросом `PATCH /api/auth/profile`, передав `{"displayName":"Ваше имя"}`.
+Метрики сервера администратора отображаются в окне профиля.
 
-## Форматы
+## Поддерживаемые форматы
 
-PNG и JPG кодируются через Java ImageIO. WEBP, GIF, TIFF, HEIC и AVIF кодируются через libvips; backend Docker устанавливает libvips и HEVC/AV1 encoder plugins.
-Локальный запуск backend для этих пяти форматов требует установленного в `PATH` инструмента `vips` и соответствующих HEIF encoder plugins.
-Загрузка источников использует зарегистрированные Java ImageIO readers; HEIC/AVIF input не поддерживается без совместимого reader.
-Пакетная обработка выполняется множественными multipart-запросами с теми же options.
+Форматы PNG и JPG кодируются средствами Java ImageIO. Форматы WEBP, GIF, TIFF, HEIC и AVIF
+кодируются с помощью libvips. Docker-образ сервера включает libvips и модули кодирования HEVC/AV1.
+Для локальной конвертации в эти пять форматов установите `vips` и необходимые модули HEIF,
+а также добавьте `vips` в переменную `PATH`.
+Загружаемые исходные изображения читаются зарегистрированными средствами Java ImageIO.
+Загрузка файлов HEIC и AVIF не поддерживается, если в среде нет совместимого средства чтения.
+Пакетная обработка выполняется несколькими multipart-запросами с одинаковыми параметрами.
